@@ -13,45 +13,62 @@
 class Buffer
 {
 public:
-    Buffer(int size) : size_(size)
+    Buffer(int capcity) : pointer_(0), capcity_(capcity), size_(0)
     {
-        head_ = new uint8_t[size_];
-        pointer_ = 0;
+        start_ = new uint8_t[size_];
     }
 
-    void append(const uint8_t* src, int sizeToAppend)
+    ~Buffer()
     {
-        if (size_ - pointer_ < sizeToAppend) {
+        delete[] start_;
+    }
+
+    void append(const void* src, int sizeToAppend)
+    {
+        if (size_ + sizeToAppend > capcity_) {
             expand(sizeToAppend);
         }
-        memcpy(&head_[pointer_], src, sizeToAppend);
+        memcpy(&start_[size_], src, sizeToAppend);
+        size_ += sizeToAppend;
     }
 
     int forwardPointer(int offset)
     {
         if (pointer_ + offset < size_) {
+            pointer_ += offset;
+            return 0;
         } else {
             return -1;
         }
     }
 
+    int size() const
+    {
+        return size_ - pointer_;
+    }
+
+    const uint8_t* get()
+    {
+        return start_ + pointer_;
+    }
 
 private:
 
-    void expand(int requredExtraSize)
+    void expand(int requiredExtraSize)
     {
-        int newSize = size_ + requredExtraSize * 2;
-        uint8_t* newHead = new uint8_t[newSize];
-        memcpy(newHead, head_, size_);
-        head_ = newHead;
-        size_ = newSize;
+        int newCapacity = capcity_ + requiredExtraSize * 2;
+        uint8_t* newStart = new uint8_t[newCapacity];
+        memcpy(newStart, start_, size_);
+        start_ = newStart;
+        capcity_ = newCapacity;
     }
-    uint8_t* head_;
+    uint8_t* start_;
     int pointer_;
+    int capcity_;
     int size_;
 };
 
-uint8_t* http_get(const char* host, const char* path, int* size)
+Buffer* http_get(const char* host, const char* path, int* size)
 {
     int sock;
     char buf[1034];
@@ -68,7 +85,7 @@ uint8_t* http_get(const char* host, const char* path, int* size)
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_family = AF_INET;
 
-    if ((err = getaddrinfo("10.252.41.96", "80", &hints, &res)) != 0) {
+    if ((err = getaddrinfo(host, "80", &hints, &res)) != 0) {
         _printf("error %d\n", err);
         *size = 0;
         return NULL;
@@ -97,36 +114,43 @@ uint8_t* http_get(const char* host, const char* path, int* size)
         }
         int readSizeTotal = 0;
         int readSize = recv(sock, buf, 127, 0);
+        Buffer* buffer = new Buffer(10);
         do {
-            memcpy(&result[readSizeTotal], buf, readSize);
+            buffer->append(buf, readSize);
+//            memcpy(&result[readSizeTotal], buf, readSize);
             readSizeTotal += readSize;
         } while ((readSize = recv(sock, buf, 127, 0)) > 0);
 
-        _printf("size=%d", readSizeTotal);
-        for (i = 0; i < readSizeTotal; i++) {
+//        _printf("size=%d", readSizeTotal);
+
+//        for (i = 0; i < readSizeTotal; i++) {
+        for (i = 0; i < buffer->size(); i++) {
 //            _printf("<%c>", result[i]);
-            if (i + 4 < readSizeTotal &&
-                result[i + 0] == '\r' &&
-                result[i + 1] == '\n' &&
-                result[i + 2] == '\r' &&
-                result[i + 3] == '\n') {
-                for (int j = i + 4; j < readSizeTotal; j++) {
-                    _printf("%c", result[j]);
-                }
-                *size = readSizeTotal - i - 4;
-                return &result[i + 4];
+            if (i + 4 < buffer->size() &&
+                buffer->get()[i + 0] == '\r' &&
+                buffer->get()[i + 1] == '\n' &&
+                buffer->get()[i + 2] == '\r' &&
+                buffer->get()[i + 3] == '\n') {
+//                 for (int j = i + 4; j < readSizeTotal; j++) {
+//                     _printf("%c", result[j]);
+//                 }
+//                *size = readSizeTotal - i - 4;
+//                return &result[i + 4];
+//                buffer->forwardPointer(i);
+                return buffer;
             }
         }
     }
-    return 0;
+    return NULL;
 }
 
 int main(int argc, char* argv[])
 {
     int size = 0;
-    uint8_t* buf = http_get("10.252.41.96", "/", &size);
-    for (int i = 0; i < size; i++) {
-        _printf("%c", buf[i]);
+    Buffer* buffer = http_get("b.hatena.ne.jp", "/", &size);
+    _printf("buffer=%x", buffer);
+    for (int i = 0; i < buffer->size(); i++) {
+        _printf("%c", buffer->get()[i]);
     }
     // delete buf
     return 0;
