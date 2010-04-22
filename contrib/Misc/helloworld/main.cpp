@@ -15,7 +15,7 @@ class Buffer
 public:
     Buffer(int capcity) : pointer_(0), capcity_(capcity), size_(0)
     {
-        start_ = new uint8_t[size_];
+        start_ = new uint8_t[capcity];
     }
 
     ~Buffer()
@@ -68,90 +68,84 @@ private:
     int size_;
 };
 
-Buffer* http_get(const char* host, const char* path, int* size)
+static Buffer* get_by_addr(struct addrinfo* addr, const char* host, const char* path)
 {
-    int sock;
-    char buf[1034];
-    int i;
-    struct addrinfo *rp;
-    char reqbuf[1024];
+    int sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
 
-    sprintf(reqbuf, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", path, host);
+    if (-1 == sock) {
+        return NULL;
+    }
 
-    int err;
+    if (connect(sock, addr->ai_addr, addr->ai_addrlen) != 0) {
+        return NULL;
+    }
+
+    const size_t MAX_REQUEST_SIZE = 1024;
+    char reqbuf[MAX_REQUEST_SIZE];
+    snprintf(reqbuf, MAX_REQUEST_SIZE, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", path, host);
+
+    if (send(sock, reqbuf, strlen(reqbuf), 0) < 0) {
+        closesocket(sock);
+        return NULL;
+    }
+
+    const int RECV_BUFFER_SIZE = 8192;
+    char recvBuffer[RECV_BUFFER_SIZE];
+
+    Buffer* buffer = new Buffer(8192);
+    int readSize = 0;
+    while ((readSize = recv(sock, recvBuffer, RECV_BUFFER_SIZE, 0)) > 0) {
+        buffer->append(recvBuffer, readSize);
+    }
+    closesocket(sock);
+    const int bufferSize = buffer->size();
+    const uint8_t* p = buffer->get();
+    for (int i = 0; i < bufferSize; i++) {
+        if (i + 4 < bufferSize &&
+            p[i + 0] == '\r' &&
+            p[i + 1] == '\n' &&
+            p[i + 2] == '\r' &&
+            p[i + 3] == '\n') {
+            buffer->forwardPointer(i);
+            return buffer;
+        }
+    }
+    delete buffer;
+    return NULL;
+}
+
+Buffer* http_get(const char* host, const char* path)
+{
+    int error;
     struct addrinfo hints;
-    struct addrinfo *res;
+    struct addrinfo* res;
     memset(&hints, 0, sizeof(hints));
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_family = AF_INET;
 
-    if ((err = getaddrinfo(host, "80", &hints, &res)) != 0) {
-        _printf("error %d\n", err);
-        *size = 0;
+    if ((error = getaddrinfo(host, "80", &hints, &res)) != 0) {
         return NULL;
     }
 
-    uint8_t* result = new uint8_t[4096];
-
-    for (rp = res; rp != NULL; rp = rp->ai_next) {
-        sock = socket(rp->ai_family, rp->ai_socktype,
-                      rp->ai_protocol);
-
-        if (sock == -1) {
-            _printf("socket error");
-            exit(-1);
-        }
-
-        if (connect(sock, rp->ai_addr, rp->ai_addrlen) != 0) {
-            _printf("connect error");
-            exit(-1);
-
-        }
-
-        if(send(sock, reqbuf, strlen(reqbuf), 0) < 0){
-            printf("could not send message : %s¥n", reqbuf);
-            exit(EXIT_FAILURE);
-        }
-        int readSizeTotal = 0;
-        int readSize = recv(sock, buf, 127, 0);
-        Buffer* buffer = new Buffer(10);
-        do {
-            buffer->append(buf, readSize);
-//            memcpy(&result[readSizeTotal], buf, readSize);
-            readSizeTotal += readSize;
-        } while ((readSize = recv(sock, buf, 127, 0)) > 0);
-
-//        _printf("size=%d", readSizeTotal);
-
-//        for (i = 0; i < readSizeTotal; i++) {
-        for (i = 0; i < buffer->size(); i++) {
-//            _printf("<%c>", result[i]);
-            if (i + 4 < buffer->size() &&
-                buffer->get()[i + 0] == '\r' &&
-                buffer->get()[i + 1] == '\n' &&
-                buffer->get()[i + 2] == '\r' &&
-                buffer->get()[i + 3] == '\n') {
-//                 for (int j = i + 4; j < readSizeTotal; j++) {
-//                     _printf("%c", result[j]);
-//                 }
-//                *size = readSizeTotal - i - 4;
-//                return &result[i + 4];
-//                buffer->forwardPointer(i);
-                return buffer;
-            }
+    Buffer* buffer = NULL;;
+    for (struct addrinfo* rp = res; rp != NULL; rp = rp->ai_next) {
+        buffer = get_by_addr(rp, host, path);
+        if (buffer != NULL) {
+            break;
         }
     }
-    return NULL;
+    freeaddrinfo(res);
+    return buffer;
 }
 
 int main(int argc, char* argv[])
 {
-    int size = 0;
-    Buffer* buffer = http_get("b.hatena.ne.jp", "/", &size);
+    Buffer* buffer = http_get("www.monaos.org", "/");
     _printf("buffer=%x", buffer);
     for (int i = 0; i < buffer->size(); i++) {
         _printf("%c", buffer->get()[i]);
     }
+    _printf("END");
     // delete buf
     return 0;
 }
